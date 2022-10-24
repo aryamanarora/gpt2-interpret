@@ -11,6 +11,11 @@ model = GPT2LMHeadModel.from_pretrained("gpt2")
 
 sm = torch.nn.Softmax(dim=-1)
 
+def get_topk(logits, k=5):
+    pred = torch.topk(logits[0][-1], dim=-1, k=k)
+    ret = list(zip([tokenizer.decode(x) for x in pred.indices.detach().tolist()], pred.values.detach().tolist()))
+    return ret
+
 def get_final_logits(sent=None, input_ids=None, k=5):
     """Get logit for a top k next tokens given previous context."""
 
@@ -19,14 +24,21 @@ def get_final_logits(sent=None, input_ids=None, k=5):
     else: inputs = {'input_ids': input_ids}
 
     # logits
-    outputs = model(**inputs, labels=inputs["input_ids"], output_attentions=True)
+    outputs = model(**inputs, labels=inputs["input_ids"], output_hidden_states=True, output_attentions=True)
     logits = sm(outputs.logits)
 
     # top-k
-    pred = torch.topk(logits[0][-1], dim=-1, k=k)
-    ret = list(zip([tokenizer.decode(x) for x in pred.indices.detach().tolist()], pred.values.detach().tolist()))
+    ret = get_topk(logits, k=k)
 
     return ret, inputs, outputs
+
+def logit_lens(outputs, k=5):
+    """Return top-k predicts after each layer based on the logit lens idea
+    The alignment forum is cringe but src: https://www.alignmentforum.org/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens"""
+    ret = []
+    for i in range(len(outputs.hidden_states)):
+        ret.append(get_topk(sm(model.lm_head(outputs.hidden_states[i]))))
+    return ret
 
 def get_specific_logits(sent=None, input_ids=None, options: list=[]):
     """Get logit for a specified next token given previous context."""
@@ -39,7 +51,7 @@ def get_specific_logits(sent=None, input_ids=None, options: list=[]):
     options = [[tokenizer.encode(" " + x)[0]] if type(x) == str else [x] for x in options]
 
     # logits
-    outputs = model(**inputs, labels=inputs["input_ids"], output_attentions=True)
+    outputs = model(**inputs, labels=inputs["input_ids"], output_hidden_states=True, output_attentions=True)
     logits = sm(outputs.logits)
     ret = [(tokenizer.decode(x), float(logits[0][-1][x].detach())) for x in options]
 
